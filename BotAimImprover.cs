@@ -34,7 +34,7 @@ public class BotAimImprover : BasePlugin
         public readonly string Name;
         public readonly float Frac;        // height as fraction of live eyeZ (ignored if FeetAbs)
         public readonly float Lateral;     // +right / -left, world units
-        public readonly bool  FeetAbs;     // true => z = origin.z + Frac (absolute rise), lateral 0
+        public readonly bool FeetAbs;     // true => z = origin.z + Frac (absolute rise), lateral 0
         public AimPoint(string n, float f, float lat, bool feetAbs = false)
         { Name = n; Frac = f; Lateral = lat; FeetAbs = feetAbs; }
     }
@@ -96,8 +96,8 @@ public class BotAimImprover : BasePlugin
     // Memory offsets (2026-05-19)
     // ============================================================
     // CCSBot fields:
-    private const int OFF_M_TARGETSPOT       = 0x59A4; // Vector(3 floats)
-    private const int OFF_M_ENEMY_HANDLE     = 0x5A10; // CHandle (4 bytes)
+    private const int OFF_M_TARGETSPOT = 0x59A4; // Vector(3 floats)
+    private const int OFF_M_ENEMY_HANDLE = 0x5A10; // CHandle (4 bytes)
     private const int OFF_M_IS_ENEMY_VISIBLE = 0x5A14; // bool
 
     // CCSPlayerPawn->m_pBot is a CCSBot*. Used to map controller -> pawn -> bot for caching.
@@ -113,8 +113,8 @@ public class BotAimImprover : BasePlugin
     private static readonly PluginCapability<CRayTraceInterface> _rayTraceCapability =
         new("raytrace:craytraceinterface");
 
-    // BotHider exposes disguised bots whose m_bFakePlayer is cleared, so IsBot reads false.
-    // Optional dependency: resolved in OnAllPluginsLoaded, null if BotHider isn't installed.
+    // BotHider bot
+    // Optional dependency: resolved in OnAllPluginsLoaded, null if BotHider isn't installed
     private static readonly PluginCapability<IBotHiderApi> _botHiderCapability =
         new("bothider:api");
     private IBotHiderApi? _botHiderApi;
@@ -280,7 +280,7 @@ public class BotAimImprover : BasePlugin
             {
                 AimMode.HEAD => wpn == "weapon_awp" ? _priorityBody : _priorityHead,
                 AimMode.BODY => _priorityBody,
-                _            => isBodyWeapon ? _priorityBody : _priorityJaw, // MIXED
+                _ => isBodyWeapon ? _priorityBody : _priorityJaw, // MIXED
             };
 
             int chosenIdx = PickBestPoint(visiblePoints, order);
@@ -431,7 +431,7 @@ public class BotAimImprover : BasePlugin
         {
             var rt = _rayTraceCapability.Get();
             if (rt == null) return true; // RayTrace not loaded -> don't block
-            var end  = new Vector(tx, ty, tz);
+            var end = new Vector(tx, ty, tz);
             var opts = new TraceOptions(InteractionLayers.MASK_WORLD_ONLY);
             rt.TraceEndShape(eye, end, null, opts, out TraceResult res);
             return res.Fraction >= 0.999f;
@@ -442,7 +442,7 @@ public class BotAimImprover : BasePlugin
     // ============================================================
     // Raw memory readers
     // ============================================================
-    private static unsafe byte   ReadByte(IntPtr addr)   => *(byte*)addr.ToPointer();
-    private static unsafe int    ReadInt32(IntPtr addr)  => *(int*)addr.ToPointer();
+    private static unsafe byte ReadByte(IntPtr addr) => *(byte*)addr.ToPointer();
+    private static unsafe int ReadInt32(IntPtr addr) => *(int*)addr.ToPointer();
     private static unsafe IntPtr ReadIntPtr(IntPtr addr) => *(IntPtr*)addr.ToPointer();
 }
