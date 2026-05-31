@@ -7,6 +7,7 @@ using CounterStrikeSharp.API.Modules.Utils;
 using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
 using CounterStrikeSharp.API.Core.Capabilities;
 using RayTraceAPI;
+using BotHiderApi;
 using Microsoft.Extensions.Logging;
 
 
@@ -112,6 +113,12 @@ public class BotAimImprover : BasePlugin
     private static readonly PluginCapability<CRayTraceInterface> _rayTraceCapability =
         new("raytrace:craytraceinterface");
 
+    // BotHider exposes disguised bots whose m_bFakePlayer is cleared, so IsBot reads false.
+    // Optional dependency: resolved in OnAllPluginsLoaded, null if BotHider isn't installed.
+    private static readonly PluginCapability<IBotHiderApi> _botHiderCapability =
+        new("bothider:api");
+    private IBotHiderApi? _botHiderApi;
+
     // Cache: CCSBot* -> bot's UserId .
     // Cleared on round_start and per-bot on disconnect.
     private readonly ConcurrentDictionary<IntPtr, int> _botToControllerUserId = new();
@@ -209,6 +216,15 @@ public class BotAimImprover : BasePlugin
     {
         try { _pickNewAimSpot?.Unhook(OnPickNewAimSpotPost, HookMode.Post); }
         catch { /* ignore */ }
+    }
+
+    // Resolve the optional BotHider capability once every plugin is loaded.
+    public override void OnAllPluginsLoaded(bool hotReload)
+    {
+        try { _botHiderApi = _botHiderCapability.Get(); }
+        catch { _botHiderApi = null; }
+        Logger.LogInformation("[BotAimImprover] BotHider API {State}.",
+            _botHiderApi != null ? "resolved (disguised bots supported)" : "not present");
     }
 
     // ============================================================
@@ -313,7 +329,12 @@ public class BotAimImprover : BasePlugin
         // Slow path: find which bot pawn's m_pBot points to pCCSBot.
         foreach (var ctrl in Utilities.GetPlayers())
         {
-            if (ctrl == null || !ctrl.IsValid || !ctrl.IsBot || !ctrl.UserId.HasValue)
+            if (ctrl == null || !ctrl.IsValid || !ctrl.UserId.HasValue)
+                continue;
+
+            // Accept engine bots, plus BotHider-disguised bots whose m_bFakePlayer
+            // is cleared (so IsBot reads false). m_pBot match below stays authoritative.
+            if (!ctrl.IsBot && !(_botHiderApi?.IsManagedBot(ctrl.Slot) ?? false))
                 continue;
 
             var pawn = ctrl.PlayerPawn?.Value;

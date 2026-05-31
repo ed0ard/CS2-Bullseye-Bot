@@ -15,6 +15,10 @@
     <Reference Include="RayTraceApi">
       <HintPath>libs/RayTraceApi.dll</HintPath>
     </Reference>
+    <Reference Include="BotHiderApi">
+      <HintPath>libs/BotHiderApi.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
 </Project>
