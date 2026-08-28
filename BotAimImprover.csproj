@@ -11,11 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="CounterStrikeSharp.API" Version="1.0.371" />
-    <Reference Include="RayTraceApi">
-      <HintPath>libs/RayTraceApi.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
+    <PackageReference Include="CounterStrikeSharp.API" Version="1.0.373" />
   </ItemGroup>
 
 </Project>

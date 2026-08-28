@@ -6,8 +6,6 @@ using CounterStrikeSharp.API.Core.Attributes;
 using CounterStrikeSharp.API.Modules.Memory;
 using CounterStrikeSharp.API.Modules.Utils;
 using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
-using CounterStrikeSharp.API.Core.Capabilities;
-using RayTraceAPI;
 using Microsoft.Extensions.Logging;
 
 
@@ -129,9 +127,6 @@ public class BotAimImprover : BasePlugin
     private Offsets _off;
 
     private MemoryFunctionVoid<IntPtr>? _pickNewAimSpot;
-    private static readonly PluginCapability<CRayTraceInterface> _rayTraceCapability =
-        new("raytrace:craytraceinterface");
-
     // Cache: CCSBot* -> bot's UserId .
     // Cleared on round_start and per-bot on disconnect.
     private readonly ConcurrentDictionary<IntPtr, int> _botToControllerUserId = new();
@@ -408,16 +403,14 @@ public class BotAimImprover : BasePlugin
                  || float.IsInfinity(x) || float.IsInfinity(y) || float.IsInfinity(z));
     }
 
-    // World-only LoS test from eye to target point. True if unobstructed (>= 0.999).
+    // World-only LoS test from eye to target point, true if unobstructed (>= 0.999)
     private bool PointVisibleFromEye(Vector eye, float tx, float ty, float tz)
     {
         try
         {
-            var rt = _rayTraceCapability.Get();
-            if (rt == null) return true; // RayTrace not loaded -> don't block
             var end = new Vector(tx, ty, tz);
-            var opts = new TraceOptions(InteractionLayers.MASK_WORLD_ONLY);
-            rt.TraceEndShape(eye, end, null, opts, out TraceResult res);
+            var opts = new TraceOptions { InteractsWith = Masks.SolidBrushOnly };
+            var res = Trace.TraceEndShape(eye, end, options: opts);
             return res.Fraction >= 0.999f;
         }
         catch { return true; }
