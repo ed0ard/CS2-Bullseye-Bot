@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../Geometry/AimSelection.cs" Link="AimSelection.cs" />
+    <Compile Include="../Geometry/Capsule.cs" Link="Capsule.cs" />
     <Compile Include="../Geometry/HitValidation.cs" Link="HitValidation.cs" />
     <Compile Include="../Geometry/NativeBindings.cs" Link="NativeBindings.cs" />
   </ItemGroup>

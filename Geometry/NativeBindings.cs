@@ -44,19 +44,27 @@ internal sealed class NativeBindings : IDisposable
         PickAddress = VerifyEntry(server, Data.PickNewAimSpot);
         nint getHitboxes = VerifyEntry(server, Data.HitboxList);
         nint free = NativeLibrary.GetExport(tier0.BaseAddress, "MemAlloc_FreeFunc");
-        var l = Data.Layout;
+        var layout = Data.Layout;
         config = new()
         {
             Size = (uint)Marshal.SizeOf<Configuration>(), Version = 1, GetHitboxes = getHitboxes, FreeMemory = free,
-            PawnSceneNode = l.PawnSceneNode, SkeletonVtable = l.SkeletonVtable,
-            BoxA = l.BoxA, BoxB = l.BoxB, BoxRadius = l.BoxRadius, BoxGroup = l.BoxGroup,
-            BoxShape = l.BoxShape, BoxIndex = l.BoxIndex
+            PawnSceneNode = layout.PawnSceneNode, SkeletonVtable = layout.SkeletonVtable,
+            BoxA = layout.BoxA, BoxB = layout.BoxB, BoxRadius = layout.BoxRadius, BoxGroup = layout.BoxGroup,
+            BoxShape = layout.BoxShape, BoxIndex = layout.BoxIndex
         };
         if (Marshal.SizeOf<Capsule>() != 36 || config.Size != 56)
             throw new InvalidDataException("Hitbox snapshot ABI size mismatch");
         helper = NativeLibrary.Load(Path.Combine(directory, "native", "win-x64", "BullseyeGeometry.dll"));
-        try { read = Marshal.GetDelegateForFunctionPointer<ReadSnapshot>(NativeLibrary.GetExport(helper, "Bullseye_ReadHitboxesV1")); }
-        catch { Dispose(); throw; }
+        try
+        {
+            nint export = NativeLibrary.GetExport(helper, "Bullseye_ReadHitboxesV1");
+            read = Marshal.GetDelegateForFunctionPointer<ReadSnapshot>(export);
+        }
+        catch
+        {
+            Dispose();
+            throw;
+        }
     }
 
     private static ProcessModule FindVerifiedModule(string name, string hash)
@@ -86,6 +94,7 @@ internal sealed class NativeBindings : IDisposable
     }
 
     internal int Read(nint pawn, Capsule[] output) => read(in config, pawn, output, output.Length);
+
     public void Dispose()
     {
         if (helper == 0) return;

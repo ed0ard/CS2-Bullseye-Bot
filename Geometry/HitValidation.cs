@@ -7,8 +7,12 @@ internal static class HitValidation
     internal static ProbeState Classify(float fraction, bool startSolid, bool didHit,
         nint hitEntity, nint targetEntity, nint hitbox)
     {
-        if (!float.IsFinite(fraction) || fraction < 0 || fraction > 1) return ProbeState.Failed;
-        return startSolid || !didHit || targetEntity == 0 || hitEntity != targetEntity || hitbox == 0
-            ? ProbeState.Miss : ProbeState.Hit;
+        if (!float.IsFinite(fraction) || fraction < 0 || fraction > 1)
+            return ProbeState.Failed;
+
+        if (startSolid || !didHit || targetEntity == 0 || hitEntity != targetEntity || hitbox == 0)
+            return ProbeState.Miss;
+
+        return ProbeState.Hit;
     }
 }

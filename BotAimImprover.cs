@@ -3,6 +3,7 @@ using BotAimImprover.Geometry;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes;
+using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
 using CounterStrikeSharp.API.Modules.Utils;
 using Microsoft.Extensions.Logging;
@@ -31,18 +32,8 @@ public class BotAimImprover : BasePlugin
 
     public override void Load(bool hotReload)
     {
-        AddCommand("bot_aim", "Set bot aim mode: head, body, mixed; or status", (caller, info) =>
-        {
-            string arg = info.ArgCount > 1 ? info.GetArg(1).Trim().ToLowerInvariant() : "";
-            switch (arg)
-            {
-                case "head": mode = AimMode.Head; break;
-                case "body": mode = AimMode.Body; break;
-                case "mixed": mode = AimMode.Mixed; break;
-            }
-            Server.PrintToConsole($"[BotAimImprover] mode={mode}; {status}; overrides={overrides}; fallbacks={fallbacks}. "
-                + "Commands: head, body, mixed, status. Head mode preserves the AWP body preference.");
-        });
+        AddCommand("bot_aim", "Set bot aim mode: head, body, mixed; or status", OnAimCommand);
+
         try
         {
             native = new NativeBindings(ModuleDirectory);
@@ -58,18 +49,42 @@ public class BotAimImprover : BasePlugin
         catch (Exception ex)
         {
             geometry = null;
-            native?.Dispose(); native = null;
+            native?.Dispose();
+            native = null;
             status = "unavailable; native aim retained";
             Logger.LogWarning(ex, "[BotAimImprover] {Status}", status);
         }
     }
+
     public override void Unload(bool hotReload)
     {
         // If removing the hook fails, do not unload code still reachable by it.
-        if (hooked) { pick!.Unhook(OnPickNewAimSpotPost, HookMode.Post); hooked = false; }
+        if (hooked)
+        {
+            pick!.Unhook(OnPickNewAimSpotPost, HookMode.Post);
+            hooked = false;
+        }
+
         geometry = null;
-        native?.Dispose(); native = null;
+        native?.Dispose();
+        native = null;
     }
+
+    private void OnAimCommand(CCSPlayerController? caller, CommandInfo command)
+    {
+        string argument = command.ArgCount > 1 ? command.GetArg(1).Trim().ToLowerInvariant() : "";
+        mode = argument switch
+        {
+            "head" => AimMode.Head,
+            "body" => AimMode.Body,
+            "mixed" => AimMode.Mixed,
+            _ => mode
+        };
+
+        Server.PrintToConsole($"[BotAimImprover] mode={mode}; {status}; overrides={overrides}; fallbacks={fallbacks}. "
+            + "Commands: head, body, mixed, status. Head mode preserves the AWP body preference.");
+    }
+
     private HookResult OnPickNewAimSpotPost(DynamicHook hook)
     {
         if (geometry == null || native == null) return HookResult.Continue;
@@ -79,30 +94,53 @@ public class BotAimImprover : BasePlugin
             if (address == 0) return HookResult.Continue;
             var bot = new CCSBot(address);
             if (!bot.IsEnemyVisible) return HookResult.Continue;
+
             // CSS schema accessors resolve current offsets; CHandle keeps the serial number.
             var pawn = bot.Player;
             var enemy = bot.Enemy.Value;
             if (pawn is not { IsValid: true, Health: > 0 } || enemy is not { IsValid: true, Health: > 0 }
                 || pawn.Handle == enemy.Handle || pawn.TeamNum == enemy.TeamNum || enemy.GunGameImmunity)
                 return HookResult.Continue;
+
             var controller = pawn.Controller.Value?.As<CCSPlayerController>();
             if (controller is not { IsValid: true, IsBot: true } || controller.ControllingBot
                 || controller.PlayerPawn.Value?.Handle != pawn.Handle || pawn.Bot?.Handle != address)
                 return HookResult.Continue;
+
             int tick = Server.TickCount;
-            if (tick != budgetTick) { budgetTick = tick; raysThisTick = 0; }
+            if (tick != budgetTick)
+            {
+                budgetTick = tick;
+                raysThisTick = 0;
+            }
+
             if (raysThisTick >= MaxRaysPerTick
                 || !geometry.TryGet(enemy.Handle, enemy.EntityHandle.Raw, tick, out var capsules))
-            { fallbacks++; return HookResult.Continue; }
+            {
+                fallbacks++;
+                return HookResult.Continue;
+            }
+
             Vector eye = bot.EyePosition;
             if (!Capsule.Finite(new Vec3(eye.X, eye.Y, eye.Z)))
-            { fallbacks++; return HookResult.Continue; }
+            {
+                fallbacks++;
+                return HookResult.Continue;
+            }
+
             string? weapon = pawn.WeaponServices?.ActiveWeapon.Value?.DesignerName;
             var probe = new AimProbe(this, pawn, enemy, eye, native.Data.Layout.BoxGroup);
-            if (!AimSelection.TrySelect(capsules, AimSelection.PreferenceFor(mode, weapon), ref probe, out var point))
-            { fallbacks++; return HookResult.Continue; }
+            var preference = AimSelection.PreferenceFor(mode, weapon);
+            if (!AimSelection.TrySelect(capsules, preference, ref probe, out var point))
+            {
+                fallbacks++;
+                return HookResult.Continue;
+            }
+
             Vector destination = bot.TargetSpot;
-            destination.X = point.X; destination.Y = point.Y; destination.Z = point.Z;
+            destination.X = point.X;
+            destination.Y = point.Y;
+            destination.Z = point.Z;
             overrides++;
         }
         catch (Exception ex)
@@ -114,8 +152,10 @@ public class BotAimImprover : BasePlugin
                 Logger.LogWarning(ex, "[BotAimImprover] Aim query failed; preserving native result");
             }
         }
+
         return HookResult.Continue;
     }
+
     private struct AimProbe(BotAimImprover owner, CCSPlayerPawn shooter, CCSPlayerPawn target,
         Vector eye, int groupOffset) : IAimProbe
     {
@@ -124,17 +164,22 @@ public class BotAimImprover : BasePlugin
             actualGroup = 0;
             if (owner.raysThisTick >= MaxRaysPerTick) return ProbeState.Failed;
             owner.raysThisTick++;
+
             try
             {
                 var result = Trace.TraceEndShape(eye, new Vector(point.X, point.Y, point.Z), shooter, ShotOptions);
                 var state = HitValidation.Classify(result.Fraction, result.IsAllSolid, result.DidHit(),
                     result.HitEntity().Handle, target.Handle, result.Hitbox());
                 if (state != ProbeState.Hit) return state;
+
                 // Use engine-returned CHitBox metadata, not the candidate's label.
                 actualGroup = Marshal.ReadInt32(result.Hitbox() + groupOffset);
                 return actualGroup is >= 1 and <= 8 ? ProbeState.Hit : ProbeState.Failed;
             }
-            catch { return ProbeState.Failed; }
+            catch
+            {
+                return ProbeState.Failed;
+            }
         }
     }
 }
