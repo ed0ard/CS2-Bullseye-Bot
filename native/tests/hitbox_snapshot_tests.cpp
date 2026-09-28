@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Adapted from unicbm/CS2-bot-improver-light native/BotVision (93794d58819d).
 #include "hitbox_snapshot.h"
 #include <cstdlib>
 #include <cstring>

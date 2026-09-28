@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Adapted from unicbm/CS2-bot-improver-light native/BotVision; see THIRD_PARTY_NOTICES.md.
+// Adapted from unicbm/CS2-bot-improver-light native/BotVision (93794d58819d),
+// the AGPL component derived from XBribo/CS2-Bot-Vision.
 #pragma once
 #include <cstdint>
 

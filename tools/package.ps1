@@ -25,8 +25,7 @@ try {
     }
     Copy-Item -LiteralPath 'gamedata/deadeye.json' -Destination "$plugin/gamedata"
     Copy-Item -LiteralPath 'build/native/Release/BullseyeGeometry.dll' -Destination "$plugin/native/win-x64"
-    Copy-Item -LiteralPath 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'README.md' -Destination $plugin
-    Copy-Item -LiteralPath 'docs' -Destination $plugin -Recurse
+    Copy-Item -LiteralPath 'LICENSE', 'README.md' -Destination $plugin
     $archive = "$stage.zip"
     Compress-Archive -Path "$stage/addons" -DestinationPath $archive
     Write-Output "Package: $([IO.Path]::GetFullPath($archive))"
