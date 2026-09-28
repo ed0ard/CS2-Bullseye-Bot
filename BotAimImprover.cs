@@ -99,7 +99,7 @@ public class BotAimImprover : BasePlugin
             { fallbacks++; return HookResult.Continue; }
             string? weapon = pawn.WeaponServices?.ActiveWeapon.Value?.DesignerName;
             var probe = new AimProbe(this, pawn, enemy, eye, native.Data.Layout.BoxGroup);
-            if (!AimSelection.TrySelect(capsules, AimSelection.PrefersBody(mode, weapon), ref probe, out var point))
+            if (!AimSelection.TrySelect(capsules, AimSelection.PreferenceFor(mode, weapon), ref probe, out var point))
             { fallbacks++; return HookResult.Continue; }
             Vector destination = bot.TargetSpot;
             destination.X = point.X; destination.Y = point.Y; destination.Z = point.Z;

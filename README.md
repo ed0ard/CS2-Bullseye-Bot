@@ -14,14 +14,20 @@ validated. Do not change only the profile hash to force an unknown build to load
 
 ## Commands
 
-- `bot_aim mixed`: body-first for snipers/spread weapons, head-first otherwise.
+- `bot_aim mixed`: body-first for snipers/spread weapons, JAW-first otherwise.
 - `bot_aim head`: head-first, retaining the existing AWP body-first exception.
 - `bot_aim body`: body-first for all weapons.
 - `bot_aim` / `bot_aim status`: current mode, availability and override/fallback counts.
 
-Candidate points are current server hitbox centers, with fixed hitgroup ordering.
-The old synthetic JAW point maps to the head group; neck remains a separate group.
-A direct trace must hit the intended enemy and hitgroup. Failed queries preserve
+Candidates use current server hitbox centers plus one JAW-style point inside the
+neck toward the head center (up to half a neck radius, capped before the head center).
+This is a pose-derived aiming bias,
+not a separate hitbox; it accepts actual head or neck hits. Mixed rifles try
+`JAW -> NECK -> HEAD`; head mode tries `HEAD -> NECK -> JAW`. Body preference keeps
+torso/arms first, then `JAW -> NECK -> HEAD`. Missing/degenerate head-neck geometry
+skips JAW. Each selection tests at most 32 capsule centers and one JAW point.
+The bias preserves the low-aiming intent, not a measured historical headshot rate.
+A direct trace must hit the intended enemy and an allowed hitgroup. Failed queries preserve
 native aim. There is no wallbang, damage scoring or adaptive edge search.
 
 ## Installation
