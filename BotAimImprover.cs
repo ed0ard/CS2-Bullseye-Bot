@@ -102,7 +102,7 @@ public class BotAimImprover : BasePlugin
     };
     // ============================================================
     // PickNewAimSpot signatures
-    // CCSPlayerPawn.m_pBot: Windows 0x1510 , Linux 0x17D8
+    // CCSPlayerPawn.m_pBot: Windows 0x1518 (CS2 1.41.9.0), Linux 0x17D8
     // ============================================================
     private readonly struct Offsets
     {
@@ -129,7 +129,7 @@ public class BotAimImprover : BasePlugin
         ts: 0x5994,
         en: 0x5A00,
         vis: 0x5A04,
-        pbot: 0x1510,
+        pbot: 0x1518,
         sig: "48 8B C4 55 57 48 8D 68 ? 48 81 EC ? ? ? ? 48 8B F9 0F 29 70 ? 8B 89 ? ? ? ? 83 F9 FF"
     );
 
