@@ -151,6 +151,8 @@ public class BotAimImprover : BasePlugin
         "weapon_nova", "weapon_xm1014", "weapon_sawedoff", "weapon_mag7", "weapon_revolver"
     };
 
+    private static readonly TraceOptions _visibilityTraceOptions = new() { InteractsWith = Masks.SolidBrushOnly };
+
     // One-shot flag so we log a single confirmation that overrides are actually firing.
     private bool _firstOverrideLogged = false;
 
@@ -290,13 +292,28 @@ public class BotAimImprover : BasePlugin
 
             // 5) Walk the priority order and raytrace each point from the bot's
             // eye; the first visible point wins.
+            var origin = enemyPawn.AbsOrigin;
+            if (origin == null)
+                return HookResult.Continue;
+            float ox = origin.X, oy = origin.Y, oz = origin.Z;
+            float eyeZ = enemyPawn.ViewOffset?.Z ?? 64.0f;
+            float yawDeg = enemyPawn.EyeAngles?.Y ?? 0.0f;
+            double yawRad = yawDeg * Math.PI / 180.0;
+            float rX = (float)Math.Sin(yawRad);   // RIGHT vector x
+            float rY = (float)-Math.Cos(yawRad);  // RIGHT vector y
+            var traceEnd = new Vector();
             int chosenIdx = -1;
             float rx = 0f, ry = 0f, rz = 0f;
             foreach (int idx in order)
             {
-                if (!TryComputePartPos(enemyPawn, idx, out float x, out float y, out float z))
+                ref readonly AimPoint p = ref _aimPoints[idx];
+                float x = p.FeetAbs ? ox : ox + rX * p.Lateral;
+                float y = p.FeetAbs ? oy : oy + rY * p.Lateral;
+                float z = oz + (p.FeetAbs ? p.Frac : eyeZ * p.Frac);
+                if (float.IsNaN(x) || float.IsNaN(y) || float.IsNaN(z)
+                    || float.IsInfinity(x) || float.IsInfinity(y) || float.IsInfinity(z))
                     continue;
-                if (!PointVisibleFromEye(botEye, x, y, z))
+                if (!PointVisibleFromEye(botEye, traceEnd, x, y, z))
                     continue;
                 chosenIdx = idx;
                 rx = x; ry = y; rz = z;
@@ -336,9 +353,9 @@ public class BotAimImprover : BasePlugin
         // Cache hit -> look up by UserId.
         if (_botToControllerUserId.TryGetValue(pCCSBot, out int cachedUserId))
         {
-            foreach (var ctrl in Utilities.GetPlayers())
-                if (ctrl != null && ctrl.IsValid && ctrl.UserId.HasValue && ctrl.UserId.Value == cachedUserId)
-                    return ctrl;
+            var ctrl = Utilities.GetPlayerFromUserid(cachedUserId);
+            if (ctrl != null && ctrl.IsValid && ctrl.UserId.HasValue && ctrl.UserId.Value == cachedUserId)
+                return ctrl;
             _botToControllerUserId.TryRemove(pCCSBot, out int _); // stale
         }
 
@@ -377,46 +394,13 @@ public class BotAimImprover : BasePlugin
         return true;
     }
 
-    // Compute world position of derived point `idx` from the enemy pawn's schema fields.
-    private static bool TryComputePartPos(CCSPlayerPawn enemyPawn, int idx,
-                                          out float x, out float y, out float z)
-    {
-        x = y = z = 0;
-        if (idx < 0 || idx >= _aimPoints.Length) return false;
-        var origin = enemyPawn.AbsOrigin;
-        if (origin == null) return false;
-
-        ref readonly AimPoint p = ref _aimPoints[idx];
-        float ox = origin.X, oy = origin.Y, oz = origin.Z;
-        float eyeZ = enemyPawn.ViewOffset?.Z ?? 64.0f;
-
-        float yawDeg = enemyPawn.EyeAngles?.Y ?? 0.0f;
-        double yawRad = yawDeg * Math.PI / 180.0;
-        float rX = (float)Math.Sin(yawRad);   // RIGHT vector x
-        float rY = (float)-Math.Cos(yawRad);  // RIGHT vector y
-
-        if (p.FeetAbs)
-        {
-            x = ox; y = oy; z = oz + p.Frac;   // absolute rise (FEET)
-        }
-        else
-        {
-            x = ox + rX * p.Lateral;
-            y = oy + rY * p.Lateral;
-            z = oz + eyeZ * p.Frac;
-        }
-        return !(float.IsNaN(x) || float.IsNaN(y) || float.IsNaN(z)
-                 || float.IsInfinity(x) || float.IsInfinity(y) || float.IsInfinity(z));
-    }
-
     // World-only LoS test from eye to target point, true if unobstructed (>= 0.999)
-    private bool PointVisibleFromEye(Vector eye, float tx, float ty, float tz)
+    private bool PointVisibleFromEye(Vector eye, Vector end, float tx, float ty, float tz)
     {
         try
         {
-            var end = new Vector(tx, ty, tz);
-            var opts = new TraceOptions { InteractsWith = Masks.SolidBrushOnly };
-            var res = Trace.TraceEndShape(eye, end, options: opts);
+            end.X = tx; end.Y = ty; end.Z = tz;
+            var res = Trace.TraceEndShape(eye, end, options: _visibilityTraceOptions);
             return res.Fraction >= 0.999f;
         }
         catch { return true; }
