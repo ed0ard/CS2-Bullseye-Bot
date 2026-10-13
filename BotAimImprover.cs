@@ -102,35 +102,11 @@ public class BotAimImprover : BasePlugin
     };
     // ============================================================
     // PickNewAimSpot signatures
-    // CCSPlayerPawn.m_pBot: Windows & Linux
     // ============================================================
-    private readonly struct Offsets
-    {
-        public readonly int TargetSpot;   // Vector(3) m_targetSpot
-        public readonly int Enemy;        // CHandle m_enemy
-        public readonly int IsVisible;    // bool m_isEnemyVisible
-        public readonly int PBot;         // CCSPlayerPawn->m_pBot
-        public readonly string Sig;
-        public Offsets(int ts, int en, int vis, int pbot, string sig)
-        {
-            TargetSpot = ts;
-            Enemy = en;
-            IsVisible = vis;
-            PBot = pbot;
-            Sig = sig;
-        }
-    }
-
-    private static readonly Offsets LinuxOffsets = new(
-        ts: 0x596C, en: 0x59D8, vis: 0x59DC, pbot: 0x17E0,
-        sig: "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F ? ? 00 00 83 F9 FF");
-
-    private static readonly Offsets WindowsOffsets = new(
-        ts: 0x5994, en: 0x5A00, vis: 0x5A04, pbot: 0x1518,
-        sig: "48 8B C4 55 57 48 8D 68 ? 48 81 EC ? ? ? ? 48 8B F9 0F 29 70 ? 8B 89 ? ? ? ? 83 F9 FF"
-    );
-
-    private Offsets _off;
+    private const string LinuxSignature =
+        "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F ? ? 00 00 83 F9 FF";
+    private const string WindowsSignature =
+        "48 8B C4 55 57 48 8D 68 ? 48 81 EC ? ? ? ? 48 8B F9 0F 29 70 ? 8B 89 ? ? ? ? 83 F9 FF";
 
     private MemoryFunctionVoid<IntPtr>? _pickNewAimSpot;
     // Cache: CCSBot* -> bot's UserId .
@@ -161,11 +137,10 @@ public class BotAimImprover : BasePlugin
     public override void Load(bool hotReload)
     {
         bool win = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-        _off = win ? WindowsOffsets : LinuxOffsets;
 
         try
         {
-            _pickNewAimSpot = new MemoryFunctionVoid<IntPtr>(_off.Sig);
+            _pickNewAimSpot = new MemoryFunctionVoid<IntPtr>(win ? WindowsSignature : LinuxSignature);
 
             long pnaRuntime = _pickNewAimSpot.Handle.ToInt64();
             if (pnaRuntime == 0)
@@ -251,22 +226,20 @@ public class BotAimImprover : BasePlugin
             IntPtr pCCSBot = hook.GetParam<IntPtr>(0);
             if (pCCSBot == IntPtr.Zero)
                 return HookResult.Continue;
+            var bot = new CCSBot(pCCSBot);
 
             // 1) Gate: enemy must be generally visible before we
             //    spend any raytraces. Otherwise the native used last-known position.
-            if (ReadByte(pCCSBot + _off.IsVisible) == 0)
+            if (!bot.IsEnemyVisible)
                 return HookResult.Continue;
 
             // 2) Resolve enemy pawn from m_enemy CHandle.
-            int enemyHandleRaw = ReadInt32(pCCSBot + _off.Enemy);
-            if (enemyHandleRaw == -1)
-                return HookResult.Continue;
-
-            int enemyIdx = enemyHandleRaw & 0x7FFF;
+            var enemy = bot.Enemy;
+            uint enemyIdx = enemy.Index;
             if (enemyIdx <= 0 || enemyIdx >= 4096)
                 return HookResult.Continue;
 
-            CCSPlayerPawn? enemyPawn = Utilities.GetEntityFromIndex<CCSPlayerPawn>(enemyIdx);
+            CCSPlayerPawn? enemyPawn = enemy.Value;
             if (enemyPawn == null || !enemyPawn.IsValid || enemyPawn.Handle == IntPtr.Zero)
                 return HookResult.Continue;
 
@@ -306,11 +279,8 @@ public class BotAimImprover : BasePlugin
                 return HookResult.Continue;
 
             // 6) Overwrite only m_targetSpot.xyz.
-            unsafe
-            {
-                float* dst = (float*)(pCCSBot + _off.TargetSpot).ToPointer();
-                dst[0] = rx; dst[1] = ry; dst[2] = rz;
-            }
+            var targetSpot = bot.TargetSpot;
+            targetSpot.X = rx; targetSpot.Y = ry; targetSpot.Z = rz;
 
             // One-time confirmation that the override path actually runs end-to-end.
             if (!_firstOverrideLogged)
@@ -353,7 +323,7 @@ public class BotAimImprover : BasePlugin
                 continue;
 
             IntPtr pBotPtr;
-            try { pBotPtr = ReadIntPtr(pawn.Handle + _off.PBot); }
+            try { pBotPtr = pawn.Bot?.Handle ?? IntPtr.Zero; }
             catch { continue; }
 
             if (pBotPtr == pCCSBot)
@@ -422,10 +392,4 @@ public class BotAimImprover : BasePlugin
         catch { return true; }
     }
 
-    // ============================================================
-    // Raw memory readers
-    // ============================================================
-    private static unsafe byte ReadByte(IntPtr addr) => *(byte*)addr.ToPointer();
-    private static unsafe int ReadInt32(IntPtr addr) => *(int*)addr.ToPointer();
-    private static unsafe IntPtr ReadIntPtr(IntPtr addr) => *(IntPtr*)addr.ToPointer();
 }
