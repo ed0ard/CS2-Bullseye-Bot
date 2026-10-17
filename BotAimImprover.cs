@@ -354,7 +354,8 @@ public class BotAimImprover : BasePlugin
         if (_botToControllerUserId.TryGetValue(pCCSBot, out int cachedUserId))
         {
             var ctrl = Utilities.GetPlayerFromUserid(cachedUserId);
-            if (ctrl != null && ctrl.IsValid && ctrl.UserId.HasValue && ctrl.UserId.Value == cachedUserId)
+            if (ctrl != null && ctrl.IsValid && ctrl.Connected == PlayerConnectedState.Connected
+                && ctrl.UserId.HasValue && ctrl.UserId.Value == cachedUserId)
                 return ctrl;
             _botToControllerUserId.TryRemove(pCCSBot, out int _); // stale
         }
