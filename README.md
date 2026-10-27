@@ -1,16 +1,23 @@
 # CS2-Bullseye-Bot
 CS2-Bullseye-Bot is a CounterStrikeSharp plugin that improves bots' aim in CS2.
 
+This Windows preview adapts PR #9 to the BotAimImprover 2.1.8 behavior shipped in
+CS2-Bot-Improver v1.4.7 (upstream `c5a2e0f`). It replaces aim-point estimation only;
+the bundle's BotAI, BotState, BotController and other components remain separate.
+
 ![bullseye_2](https://github.com/user-attachments/assets/b658e64e-028c-42de-817c-1748fe0ca4f4)
 
 ## Requirements
 
-- CounterStrikeSharp 1.0.375+ and .NET 10.
+- CounterStrikeSharp 1.0.378+ and .NET 10.
 - Windows x64, matching the server/tier0 build in `gamedata/deadeye.json`.
 - The packaged `BullseyeGeometry.dll`; no additional Ray-Trace or BotVision installation.
 
-Linux and unmatched builds retain native aim: their pose bindings are not yet
-validated. Do not change only the profile hash to force an unknown build to load.
+The Windows binding targets CS2 1.41.9.2 / revision 11162119. Linux is not included
+in this preview: keep the v1.4.7 Linux plugin unchanged. If this preview is loaded
+on an unsupported platform/build, it leaves Valve's native aim untouched; that
+is not the same as retaining ed0ard's measured-point selection. Do not change
+only the profile hash to force an unknown build to load.
 
 ## Commands
 
@@ -27,12 +34,25 @@ not a separate hitbox; it accepts actual head or neck hits. Mixed rifles try
 torso/arms first, then `JAW -> NECK -> HEAD`. Missing/degenerate head-neck geometry
 skips JAW. Each selection tests at most 32 capsule centers and one JAW point.
 The bias preserves the low-aiming intent, not a measured historical headshot rate.
+The 2.1.8 Trunk/Body distinction orders estimated side points differently. Those
+side points no longer exist here: both body preferences test actual stomach
+capsules before chest capsules. Command routing, the AWP exception and weapon
+classification are preserved, not an identical sequence of estimated points.
 A direct trace must hit the intended enemy and an allowed hitgroup. Failed queries preserve
 native aim. There is no wallbang, damage scoring or adaptive edge search.
 
+Animated capsule centers can be more accurate than origin/eye-height estimates,
+but center-only sampling can miss an exposed edge. This preview does not establish
+higher headshot rate, damage or lower server cost. Compare against the original
+v1.4.7 BotAimImprover with the same mode, profiles and other plugins; check actual
+hitgroups, misses, override/fallback counts and server frame time. Pure head-mode
+comparison separates geometry from the MIXED JAW policy.
+
 ## Installation
 
-Extract the package's `addons/` into `game/csgo/`. Keep `gamedata/deadeye.json` and
+With the server stopped, replace only the Windows v1.4.7 BotAimImprover folder
+using this package's `addons/` tree; keep the original folder for comparison.
+Keep `gamedata/deadeye.json` and
 `native/win-x64/BullseyeGeometry.dll` beside the plugin under
 `addons/counterstrikesharp/plugins/BotAimImprover/`. Check `bot_aim status` after loading.
 

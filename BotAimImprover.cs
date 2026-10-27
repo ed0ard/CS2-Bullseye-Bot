@@ -4,6 +4,7 @@ using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes;
 using CounterStrikeSharp.API.Modules.Commands;
+using CounterStrikeSharp.API.Modules.Memory;
 using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
 using CounterStrikeSharp.API.Modules.Utils;
 using Microsoft.Extensions.Logging;
@@ -11,11 +12,11 @@ using Vec3 = System.Numerics.Vector3;
 
 namespace BotAimImprover;
 
-[MinimumApiVersion(375)]
+[MinimumApiVersion(378)]
 public class BotAimImprover : BasePlugin
 {
     public override string ModuleName => "BotAimImprover";
-    public override string ModuleVersion => "3.0.0";
+    public override string ModuleVersion => "3.0.0-preview.1";
     public override string ModuleAuthor => "ed0ard & htfy96 & XBribo & unicbm";
     public override string ModuleDescription => "Pose-aware, validated aim part selection for CS2 bots.";
 
@@ -36,7 +37,17 @@ public class BotAimImprover : BasePlugin
 
         try
         {
+            // Keep 2.1.8's startup Schema validation before installing the hook.
+            if (Schema.GetSchemaOffset("CCSPlayerPawn", "m_pBot") <= 0
+                || Schema.GetSchemaOffset("CBot", "m_pPlayer") <= 0
+                || Schema.GetSchemaOffset("CCSBot", "m_targetSpot") <= 0
+                || Schema.GetSchemaOffset("CCSBot", "m_enemy") <= 0
+                || Schema.GetSchemaOffset("CCSBot", "m_isEnemyVisible") <= 0
+                || Schema.GetSchemaOffset("CCSBot", "m_eyePosition") <= 0)
+                throw new InvalidOperationException("Required bot Schema fields are missing.");
             native = new NativeBindings(ModuleDirectory);
+            if (Schema.GetSchemaOffset("CBaseEntity", "m_pGameSceneNode") != native.Data.Layout.PawnSceneNode)
+                throw new InvalidOperationException("Pawn scene node differs from the audited hitbox layout.");
             geometry = new PawnHitboxes(native);
             pick = new MemoryFunctionVoid<IntPtr>(native.Data.PickSignature);
             if (pick.Handle != native.PickAddress)
@@ -104,6 +115,7 @@ public class BotAimImprover : BasePlugin
 
             var controller = pawn.Controller.Value?.As<CCSPlayerController>();
             if (controller is not { IsValid: true, IsBot: true } || controller.ControllingBot
+                || controller.HasBeenControlledByPlayerThisRound
                 || controller.PlayerPawn.Value?.Handle != pawn.Handle || pawn.Bot?.Handle != address)
                 return HookResult.Continue;
 
