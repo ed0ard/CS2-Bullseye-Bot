@@ -12,6 +12,7 @@
     "Expected": "48895C242057415641574883EC50488BF9418BD9488B89C0"
   },
   "PickSignature": "48 8B C4 55 57 48 8D 68 ? 48 81 EC ? ? ? ? 48 8B F9 0F 29 70 ? 8B 89 ? ? ? ? 83 F9 FF",
+  "IsVisiblePosRva": 2990768,
   "Layout": {
     "PawnSceneNode": 624,
     "SkeletonVtable": 104,

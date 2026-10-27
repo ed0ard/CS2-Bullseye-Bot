@@ -45,6 +45,7 @@ internal sealed class PawnHitboxes(NativeBindings native)
         if (count <= 0 || count > buffer.Length)
             return 0;
 
-        return Capsule.ValidSnapshot(buffer.AsSpan(0, count)) ? count : 0;
+        // AimSelection validates the complete snapshot before using any candidate.
+        return count;
     }
 }

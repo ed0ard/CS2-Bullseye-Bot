@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -13,7 +14,7 @@ internal sealed class NativeBindings : IDisposable
     internal sealed record Layout(int PawnSceneNode, int SkeletonVtable, int BoxA, int BoxB,
         int BoxRadius, int BoxGroup, int BoxShape, int BoxIndex);
     internal sealed record Profile(int Version, string Build, string ServerSha256, string Tier0Sha256,
-        Entry PickNewAimSpot, Entry HitboxList, string PickSignature, Layout Layout);
+        Entry PickNewAimSpot, Entry HitboxList, int IsVisiblePosRva, string PickSignature, Layout Layout);
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct Configuration
@@ -25,9 +26,12 @@ internal sealed class NativeBindings : IDisposable
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal delegate int ReadSnapshot(in Configuration config, nint pawn,
         [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 3)] Capsule[] output, int capacity);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate byte PositionVisible(nint bot, in Vector3 point, byte checkFov, nint ignore);
 
     internal Profile Data { get; }
     internal nint PickAddress { get; }
+    internal PositionVisible IsVisible { get; }
     private readonly Configuration config;
     private readonly ReadSnapshot read;
     private nint helper;
@@ -43,6 +47,11 @@ internal sealed class NativeBindings : IDisposable
         var tier0 = FindVerifiedModule("tier0.dll", Data.Tier0Sha256);
         PickAddress = VerifyEntry(server, Data.PickNewAimSpot);
         nint getHitboxes = VerifyEntry(server, Data.HitboxList);
+        if (Data.IsVisiblePosRva <= 0 || Data.IsVisiblePosRva >= server.ModuleMemorySize)
+            throw new InvalidDataException("Invalid visibility entry bounds");
+        // The file hash pins this RVA. Call the live entry, including BotState/
+        // BotVision detours; requiring pristine entry bytes would reject the bundle.
+        IsVisible = Marshal.GetDelegateForFunctionPointer<PositionVisible>(server.BaseAddress + Data.IsVisiblePosRva);
         nint free = NativeLibrary.GetExport(tier0.BaseAddress, "MemAlloc_FreeFunc");
         var layout = Data.Layout;
         config = new()

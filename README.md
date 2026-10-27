@@ -38,8 +38,15 @@ The 2.1.8 Trunk/Body distinction orders estimated side points differently. Those
 side points no longer exist here: both body preferences test actual stomach
 capsules before chest capsules. Command routing, the AWP exception and weapon
 classification are preserved, not an identical sequence of estimated points.
-A direct trace must hit the intended enemy and an allowed hitgroup. Failed queries preserve
+A direct trace must hit the intended enemy and an allowed hitgroup. The point must
+also pass the live native position-visibility entry, including installed FOV and
+smoke hooks. Both calls share a 256-query budget per tick. Failed queries preserve
 native aim. There is no wallbang, damage scoring or adaptive edge search.
+
+BotVision's target reveal is scoped to its player-visibility scan. A standalone
+point check cannot inherit that context: if smoke rejects all candidates for a
+revealed enemy, this plugin retains the engine's original aim point. It does not
+cancel the reveal, change enemy visibility or duplicate BotState's reveal policy.
 
 Animated capsule centers can be more accurate than origin/eye-height estimates,
 but center-only sampling can miss an exposed edge. This preview does not establish

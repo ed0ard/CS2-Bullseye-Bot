@@ -27,8 +27,8 @@ public class BotAimImprover : BasePlugin
     private bool hooked, faultLogged;
     private string status = "native aim";
     private long overrides, fallbacks;
-    private int budgetTick = -1, raysThisTick;
-    private const int MaxRaysPerTick = 256;
+    private int budgetTick = -1, queriesThisTick;
+    private const int MaxQueriesPerTick = 256;
     private static readonly TraceOptions ShotOptions = new() { InteractsWith = Masks.Shot };
 
     public override void Load(bool hotReload)
@@ -123,10 +123,10 @@ public class BotAimImprover : BasePlugin
             if (tick != budgetTick)
             {
                 budgetTick = tick;
-                raysThisTick = 0;
+                queriesThisTick = 0;
             }
 
-            if (raysThisTick >= MaxRaysPerTick
+            if (queriesThisTick >= MaxQueriesPerTick
                 || !geometry.TryGet(enemy.Handle, enemy.EntityHandle.Raw, tick, out var capsules))
             {
                 fallbacks++;
@@ -141,7 +141,7 @@ public class BotAimImprover : BasePlugin
             }
 
             string? weapon = pawn.WeaponServices?.ActiveWeapon.Value?.DesignerName;
-            var probe = new AimProbe(this, pawn, enemy, eye, native.Data.Layout.BoxGroup);
+            var probe = new AimProbe(this, native, address, pawn, enemy, eye);
             var preference = AimSelection.PreferenceFor(mode, weapon);
             if (!AimSelection.TrySelect(capsules, preference, ref probe, out var point))
             {
@@ -168,30 +168,30 @@ public class BotAimImprover : BasePlugin
         return HookResult.Continue;
     }
 
-    private struct AimProbe(BotAimImprover owner, CCSPlayerPawn shooter, CCSPlayerPawn target,
-        Vector eye, int groupOffset) : IAimProbe
+    private struct AimProbe(BotAimImprover owner, NativeBindings native, nint bot,
+        CCSPlayerPawn shooter, CCSPlayerPawn target, Vector eye) : IAimProbe
     {
-        public ProbeState Query(Vec3 point, out int actualGroup)
+        public unsafe ProbeState Query(Vec3 point, out int actualGroup)
         {
             actualGroup = 0;
-            if (owner.raysThisTick >= MaxRaysPerTick) return ProbeState.Failed;
-            owner.raysThisTick++;
+            if (owner.queriesThisTick >= MaxQueriesPerTick) return ProbeState.Failed;
+            owner.queriesThisTick++;
 
-            try
-            {
-                var result = Trace.TraceEndShape(eye, new Vector(point.X, point.Y, point.Z), shooter, ShotOptions);
-                var state = HitValidation.Classify(result.Fraction, result.IsAllSolid, result.DidHit(),
-                    result.HitEntity().Handle, target.Handle, result.Hitbox());
-                if (state != ProbeState.Hit) return state;
+            // Borrow the stack point for this synchronous call; no native Vector allocation.
+            var result = Trace.TraceEndShape(eye, new Vector((nint)(&point)), shooter, ShotOptions);
+            var state = HitValidation.Classify(result.Fraction, result.IsAllSolid, result.DidHit(),
+                result.HitEntity().Handle, target.Handle, result.Hitbox());
+            if (state != ProbeState.Hit) return state;
 
-                // Use engine-returned CHitBox metadata, not the candidate's label.
-                actualGroup = Marshal.ReadInt32(result.Hitbox() + groupOffset);
-                return actualGroup is >= 1 and <= 8 ? ProbeState.Hit : ProbeState.Failed;
-            }
-            catch
-            {
-                return ProbeState.Failed;
-            }
+            // Use engine-returned CHitBox metadata, not the candidate's label.
+            actualGroup = Marshal.ReadInt32(result.Hitbox() + native.Data.Layout.BoxGroup);
+            if (actualGroup is < 1 or > 8) return ProbeState.Failed;
+
+            // A shot ray does not enforce FOV or smoke. Keep the live visibility
+            // hook chain and the native player scan's null-ignore semantics.
+            if (owner.queriesThisTick >= MaxQueriesPerTick) return ProbeState.Failed;
+            owner.queriesThisTick++;
+            return native.IsVisible(bot, in point, 1, 0) != 0 ? ProbeState.Hit : ProbeState.Miss;
         }
     }
 }
