@@ -4,6 +4,12 @@
 #pragma once
 #include <cstdint>
 
+#if defined(_WIN32)
+#define BULLSEYE_EXPORT __declspec(dllexport)
+#else
+#define BULLSEYE_EXPORT __attribute__((visibility("default")))
+#endif
+
 namespace bullseye::hitbox
 {
     struct Vec3 { float x, y, z; };
@@ -19,6 +25,6 @@ namespace bullseye::hitbox
         std::int32_t boxA, boxB, boxRadius, boxGroup, boxShape, boxIndex;
     };
     static_assert(sizeof(Capsule) == 36 && sizeof(SnapshotConfig) == 56);
-    extern "C" __declspec(dllexport) int Bullseye_ReadHitboxesV1(
+    extern "C" BULLSEYE_EXPORT int Bullseye_ReadHitboxesV1(
         const SnapshotConfig *config, void *pawn, Capsule *output, int capacity);
 }

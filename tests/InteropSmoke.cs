@@ -49,7 +49,7 @@ internal static class InteropSmoke
                 || output[0].Radius != 6 || output[0].Group != 1 || output[0].Index != 7)
                 throw new Exception("Managed/native snapshot ABI mismatch");
             GC.KeepAlive(getSkeleton); GC.KeepAlive(getHitboxes); GC.KeepAlive(free);
-            Console.WriteLine("Managed/native DLL round-trip passed (fixture, no game process)");
+            Console.WriteLine("Managed/native library round-trip passed (fixture, no game process)");
         }
         finally
         {

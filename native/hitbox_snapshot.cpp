@@ -50,7 +50,7 @@ namespace bullseye::hitbox
         }
     }
 
-    extern "C" __declspec(dllexport) int Bullseye_ReadHitboxesV1(
+    extern "C" int Bullseye_ReadHitboxesV1(
         const SnapshotConfig *config, void *pawn, Capsule *output, int capacity)
     {
         if (!config || config->size != sizeof(SnapshotConfig) || config->version != 1
@@ -64,14 +64,14 @@ namespace bullseye::hitbox
         if (!node) return -1;
         void *table = Read<void *>(node, 0);
         if (!table) return -1;
-        using GetSkeleton = void *(__fastcall *)(void *);
+        using GetSkeleton = void *(*)(void *);
         auto getSkeleton = Read<GetSkeleton>(table, c.skeletonVtable);
         if (!getSkeleton) return -1;
         void *skeleton = getSkeleton(node);
         if (!skeleton) return -1;
         Descriptors boxes(c.freeMemory);
         Transforms transforms(c.freeMemory);
-        using GetHitboxes = int(__fastcall *)(void *, void *, void *, int);
+        using GetHitboxes = int(*)(void *, void *, void *, int);
         int count = reinterpret_cast<GetHitboxes>(c.getHitboxes)(skeleton, &boxes, &transforms, 0);
         if (count <= 0 || count != boxes.count || count != transforms.count || count > 32
             || !boxes.data || !transforms.data) return -1;

@@ -30,6 +30,7 @@ internal sealed class NativeBindings : IDisposable
     internal delegate byte PositionVisible(nint bot, in Vector3 point, byte checkFov, nint ignore);
 
     internal Profile Data { get; }
+    internal string Platform { get; }
     internal nint PickAddress { get; }
     internal PositionVisible IsVisible { get; }
     private readonly Configuration config;
@@ -38,13 +39,17 @@ internal sealed class NativeBindings : IDisposable
 
     internal NativeBindings(string directory)
     {
-        if (!OperatingSystem.IsWindows() || !Environment.Is64BitProcess)
-            throw new PlatformNotSupportedException("Pose bindings are audited for Windows x64 only; native aim retained.");
-        Data = JsonSerializer.Deserialize<Profile>(File.ReadAllText(Path.Combine(directory, "gamedata", "deadeye.json")))
+        if ((!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
+            || RuntimeInformation.ProcessArchitecture != Architecture.X64)
+            throw new PlatformNotSupportedException("Pose bindings require Windows or Linux x64; native aim retained.");
+        bool windows = OperatingSystem.IsWindows();
+        Platform = windows ? "win-x64" : "linux-x64";
+        Data = JsonSerializer.Deserialize<Profile>(File.ReadAllText(Path.Combine(directory, "gamedata",
+            windows ? "deadeye.json" : "deadeye.linux.json")))
             ?? throw new InvalidDataException("Missing native profile");
         if (Data.Version != 1) throw new InvalidDataException("Unsupported native profile version");
-        var server = FindVerifiedModule("server.dll", Data.ServerSha256);
-        var tier0 = FindVerifiedModule("tier0.dll", Data.Tier0Sha256);
+        var server = FindVerifiedModule(windows ? "server.dll" : "libserver.so", Data.ServerSha256);
+        var tier0 = FindVerifiedModule(windows ? "tier0.dll" : "libtier0.so", Data.Tier0Sha256);
         PickAddress = VerifyEntry(server, Data.PickNewAimSpot);
         nint getHitboxes = VerifyEntry(server, Data.HitboxList);
         if (Data.IsVisiblePosRva <= 0 || Data.IsVisiblePosRva >= server.ModuleMemorySize)
@@ -52,7 +57,12 @@ internal sealed class NativeBindings : IDisposable
         // The file hash pins this RVA. Call the live entry, including BotState/
         // BotVision detours; requiring pristine entry bytes would reject the bundle.
         IsVisible = Marshal.GetDelegateForFunctionPointer<PositionVisible>(server.BaseAddress + Data.IsVisiblePosRva);
-        nint free = NativeLibrary.GetExport(tier0.BaseAddress, "MemAlloc_FreeFunc");
+        // ELF module bases are not dlopen handles. Retain only our temporary
+        // reference; the already-loaded engine owns tier0 for this plugin's life.
+        nint allocatorModule = NativeLibrary.Load(tier0.FileName);
+        nint free;
+        try { free = NativeLibrary.GetExport(allocatorModule, "MemAlloc_FreeFunc"); }
+        finally { NativeLibrary.Free(allocatorModule); }
         var layout = Data.Layout;
         config = new()
         {
@@ -63,7 +73,8 @@ internal sealed class NativeBindings : IDisposable
         };
         if (Marshal.SizeOf<Capsule>() != 36 || config.Size != 56)
             throw new InvalidDataException("Hitbox snapshot ABI size mismatch");
-        helper = NativeLibrary.Load(Path.Combine(directory, "native", "win-x64", "BullseyeGeometry.dll"));
+        helper = NativeLibrary.Load(Path.Combine(directory, "native", Platform,
+            windows ? "BullseyeGeometry.dll" : "libBullseyeGeometry.so"));
         try
         {
             nint export = NativeLibrary.GetExport(helper, "Bullseye_ReadHitboxesV1");
@@ -84,7 +95,7 @@ internal sealed class NativeBindings : IDisposable
             if (!module.ModuleName.Equals(name, StringComparison.OrdinalIgnoreCase)) continue;
             using var stream = File.OpenRead(module.FileName);
             if (!Convert.ToHexString(SHA256.HashData(stream)).Equals(hash, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException($"{name} differs from deadeye.json; audit required before enabling overrides");
+                throw new InvalidOperationException($"{name} differs from the platform profile; audit required before enabling overrides");
             return module;
         }
         throw new InvalidOperationException($"{name} is not loaded");

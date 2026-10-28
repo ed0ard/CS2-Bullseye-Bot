@@ -1,0 +1,26 @@
+{
+  "Version": 1,
+  "Build": "Linux x64 1.41.9.2 / revision 11162119 / 2026-10-23",
+  "ServerSha256": "AC63A1513AAC0D7716AA7920D5EE8728FEB9953600AEA79F3C2C92780BA8EAE7",
+  "Tier0Sha256": "3A26600B19ED66F06F210CC81FD82ECB2D2BE896D6C9A383AA728E04A3B08C54",
+  "PickNewAimSpot": {
+    "Rva": 12625616,
+    "Expected": "554889E541554154534889FB4883EC588B8FD859000083F9FF0F84A302000048"
+  },
+  "HitboxList": {
+    "Rva": 25300576,
+    "Expected": "554889E54157415641554154534883EC38488B87C00100004885C00F84C10400"
+  },
+  "PickSignature": "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F ? ? 00 00 83 F9 FF",
+  "IsVisiblePosRva": 12611984,
+  "Layout": {
+    "PawnSceneNode": 1320,
+    "SkeletonVtable": 112,
+    "BoxA": 24,
+    "BoxB": 36,
+    "BoxRadius": 48,
+    "BoxGroup": 56,
+    "BoxShape": 60,
+    "BoxIndex": 72
+  }
+}

@@ -16,7 +16,7 @@ namespace BotAimImprover;
 public class BotAimImprover : BasePlugin
 {
     public override string ModuleName => "BotAimImprover";
-    public override string ModuleVersion => "3.0.0-preview.1";
+    public override string ModuleVersion => "3.0.0-preview.2";
     public override string ModuleAuthor => "ed0ard & htfy96 & XBribo & unicbm";
     public override string ModuleDescription => "Pose-aware, validated aim part selection for CS2 bots.";
 
@@ -46,15 +46,18 @@ public class BotAimImprover : BasePlugin
                 || Schema.GetSchemaOffset("CCSBot", "m_eyePosition") <= 0)
                 throw new InvalidOperationException("Required bot Schema fields are missing.");
             native = new NativeBindings(ModuleDirectory);
-            if (Schema.GetSchemaOffset("CBaseEntity", "m_pGameSceneNode") != native.Data.Layout.PawnSceneNode)
-                throw new InvalidOperationException("Pawn scene node differs from the audited hitbox layout.");
+            // The direct pawn scene-node pointer is not a server Schema field.
+            // Its layout is verified with the platform-specific binary profile.
             geometry = new PawnHitboxes(native);
-            pick = new MemoryFunctionVoid<IntPtr>(native.Data.PickSignature);
-            if (pick.Handle != native.PickAddress)
+            if (NativeAPI.FindSignature(Addresses.ServerPath, native.Data.PickSignature) != native.PickAddress)
                 throw new InvalidOperationException("PickNewAimSpot signature resolved outside the verified entry");
+            pick = new MemoryFunctionVoid<IntPtr>(native.Data.PickSignature);
+            // Handle identifies CSS's ValveFunction wrapper, not the code entry.
+            if (pick.Handle == IntPtr.Zero)
+                throw new InvalidOperationException("Could not create the PickNewAimSpot binding");
             pick.Hook(OnPickNewAimSpotPost, HookMode.Post);
             hooked = true;
-            status = "pose geometry ready (Windows x64)";
+            status = $"pose geometry ready ({native.Platform})";
             Logger.LogInformation("[BotAimImprover] {Status}; {Build}", status, native.Data.Build);
         }
         catch (Exception ex)

@@ -13,7 +13,7 @@
   <ItemGroup>
     <PackageReference Include="CounterStrikeSharp.API" Version="1.0.378" />
     <Compile Remove="tests/**/*.cs" />
-    <None Update="gamedata/deadeye.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="gamedata/deadeye*.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
