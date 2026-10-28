@@ -1,0 +1,26 @@
+{
+  "Version": 1,
+  "Build": "Windows x64 1.41.9.2 / revision 11162119 / 2026-10-23",
+  "ServerSha256": "2A229DD46C8AF0B52C1F49A3E343B99D9FFE946C102C56102A45B00F6A52349C",
+  "Tier0Sha256": "F96F4F9666BE66EE3DD42A015B305D954B5DD5582B0608A74E50548DF426584D",
+  "PickNewAimSpot": {
+    "Rva": 3035728,
+    "Expected": "488BC45557488D68A14881ECA8000000488BF90F2970D88B89005A000083F9FF"
+  },
+  "HitboxList": {
+    "Rva": 13312960,
+    "Expected": "48895C242057415641574883EC50488BF9418BD9488B89C0"
+  },
+  "PickSignature": "48 8B C4 55 57 48 8D 68 ? 48 81 EC ? ? ? ? 48 8B F9 0F 29 70 ? 8B 89 ? ? ? ? 83 F9 FF",
+  "IsVisiblePosRva": 2990768,
+  "Layout": {
+    "PawnSceneNode": 624,
+    "SkeletonVtable": 104,
+    "BoxA": 24,
+    "BoxB": 36,
+    "BoxRadius": 48,
+    "BoxGroup": 56,
+    "BoxShape": 60,
+    "BoxIndex": 72
+  }
+}
