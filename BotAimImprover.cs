@@ -1,192 +1,54 @@
-using System.Collections.Concurrent;
-using System.Runtime.InteropServices;
+using System.Numerics;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes;
-using CounterStrikeSharp.API.Modules.Memory;
-using CounterStrikeSharp.API.Modules.Utils;
 using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
+using CounterStrikeSharp.API.Modules.Utils;
 using Microsoft.Extensions.Logging;
-
+using static CounterStrikeSharp.API.Core.HitGroup_t;
+using Vector = CounterStrikeSharp.API.Modules.Utils.Vector;
 
 namespace BotAimImprover;
 
-[MinimumApiVersion(305)]
-public class BotAimImprover : BasePlugin
+[MinimumApiVersion(375)]
+public sealed unsafe class BotAimImprover : BasePlugin
 {
     public override string ModuleName => "BotAimImprover";
-    public override string ModuleVersion => "2.1.8";
+    public override string ModuleVersion => "2.2.0";
     public override string ModuleAuthor => "ed0ard & htfy96 & XBribo & unicbm";
-    public override string ModuleDescription => "Restores intelligent aim part selection for CS2 bots.";
+    public override string ModuleDescription => "Selects visible aim points on animated player hitboxes.";
 
-    // ============================================================
-    // Full-body derived aim points. Each point is defined in the enemy's local frame:
-    //   pos.xy = origin.xy + RIGHT * Lateral   (RIGHT = player's right, from yaw)
-    //   pos.z  = origin.z  + eyeZ * Frac        (FeetAbsRise>0 means absolute z+rise)
-    // Heights (Frac of live eyeZ) come from tm_phoenix/ctm_sas spine bone world heights;
-    // lateral offsets from hitbox radii + measured shoulder/elbow widths.
-    // Index in this array is the part id used everywhere else.
-    // ============================================================
-    private readonly struct AimPoint
-    {
-        public readonly string Name;
-        public readonly float Frac;        // height as fraction of live eyeZ (ignored if FeetAbs)
-        public readonly float Lateral;     // +right / -left, world units
-        public readonly bool FeetAbs;     // true => z = origin.z + Frac (absolute rise), lateral 0
-        public AimPoint(string n, float f, float lat, bool feetAbs = false)
-        { Name = n; Frac = f; Lateral = lat; FeetAbs = feetAbs; }
-    }
-
-    private static readonly AimPoint[] _aimPoints =
-    {
-        new("HEAD",           1.00f,  0f),   // 0
-        new("NECK",           0.97f,  0f),   // 1
-        new("JAW",            0.92f,  0f),   // 2
-        new("CHEST",          0.82f,  0f),   // 3
-        new("GUT",            0.67f,  0f),   // 4
-        new("PELVIS",         0.60f,  0f),   // 5
-        new("LEFT_CHEST",     0.82f, -8f),   // 6
-        new("RIGHT_CHEST",    0.82f,  8f),   // 7
-        new("LEFT_SHOULDER",  0.92f, -8f),   // 8
-        new("RIGHT_SHOULDER", 0.92f,  8f),   // 9
-        new("LEFT_GUT",       0.67f, -7f),   // 10
-        new("RIGHT_GUT",      0.67f,  7f),   // 11
-        new("LEFT_THIGH",     0.38f, -5f),   // 12
-        new("RIGHT_THIGH",    0.38f,  5f),   // 13
-        new("LEFT_SHIN",      0.15f, -5f),   // 14
-        new("RIGHT_SHIN",     0.15f,  5f),   // 15
-        new("FEET",           5.0f,   0f, true), // 16  // absolute z + 5
-    };
-    // Priority orders (values are indices into _aimPoints), highest priority first.
-    // Tiers: core > centerline > side > shoulder > limb > feet.
-    // Within a tier, higher points come first. Left/right of equal height share a tier
-
-    private static readonly int[] _priorityHead =
-    {
-        0, 1, 2,         // HEAD, NECK, JAW
-        3, 4, 5,         // CHEST, GUT, PELVIS
-        6, 7, 10, 11,    // L_CHEST, R_CHEST, L_GUT, R_GUT
-        8, 9,            // L_SHOULDER, R_SHOULDER
-        12, 13, 14, 15,  // L_THIGH, R_THIGH, L_SHIN, R_SHIN
-        16               // FEET
-    };
-
-    private static readonly int[] _priorityJaw =
-    {
-        2, 1, 0,         // JAW, NECK, HEAD
-        3, 4, 5,         // CHEST, GUT, PELVIS
-        6, 7, 10, 11,    // L_CHEST, R_CHEST, L_GUT, R_GUT
-        8, 9,            // L_SHOULDER, R_SHOULDER
-        12, 13, 14, 15,  // L_THIGH, R_THIGH, L_SHIN, R_SHIN
-        16               // FEET
-    };
-
-    private static readonly int[] _priorityTrunk =
-    {
-        4, 5, 3,         // GUT, PELVIS, CHEST,
-        10, 11, 6, 7,    // L_GUT, R_GUT, L_CHEST, R_CHEST
-        8, 9,            // L_SHOULDER, R_SHOULDER
-        2, 1, 0,         // JAW, NECK, HEAD
-        12, 13, 14, 15,  // L_THIGH, R_THIGH, L_SHIN, R_SHIN
-        16               // FEET
-    };
-
-    private static readonly int[] _priorityBody =
-    {
-        4, 5, 10, 11,    // GUT, PELVIS, L_GUT, R_GUT
-        3, 6, 7,         // CHEST, L_CHEST, R_CHEST
-        8, 9,            // L_SHOULDER, R_SHOULDER
-        2, 1, 0,         // JAW, NECK, HEAD        
-        12, 13, 14, 15,  // L_THIGH, R_THIGH, L_SHIN, R_SHIN
-        16               // FEET
-    };
-    // ============================================================
-    // PickNewAimSpot signatures
-    // ============================================================
-    private const string LinuxSignature =
-        "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F ? ? 00 00 83 F9 FF";
-
-    private const string WindowsSignature =
-        "48 8B C4 55 57 48 8D 68 ? 48 81 EC ? ? ? ? 48 8B F9 0F 29 70 ? 8B 89 ? ? ? ? 83 F9 FF";
-
-    private MemoryFunctionVoid<IntPtr>? _pickNewAimSpot;
-    // Cache: CCSBot* -> bot's UserId .
-    // Cleared on round_start and per-bot on disconnect.
-    private readonly ConcurrentDictionary<IntPtr, int> _botToControllerUserId = new();
-
-    // Aim mode controlled by the `bot_aim` console command:
-    //   Mixed = priority logic; snipers + spread weapons aim body-first, others head-first
-    //   Head  = always head-first
-    //   Body  = always body-first
     private enum AimMode { MIXED, HEAD, BODY }
     private AimMode _aimMode = AimMode.MIXED;
+    private static readonly TraceOptions Shot = new() { InteractsWith = Masks.Shot };
+    private static readonly HitGroup_t[] HeadFirst =
+        [HITGROUP_HEAD, HITGROUP_NECK, HITGROUP_CHEST, HITGROUP_STOMACH, HITGROUP_LEFTARM, HITGROUP_RIGHTARM, HITGROUP_LEFTLEG, HITGROUP_RIGHTLEG];
+    private static readonly HitGroup_t[] JawFirst = [HITGROUP_NECK, HITGROUP_HEAD, .. HeadFirst[2..]];
+    private static readonly HitGroup_t[] BodyFirst =
+        [HITGROUP_STOMACH, HITGROUP_CHEST, HITGROUP_LEFTARM, HITGROUP_RIGHTARM, HITGROUP_NECK, HITGROUP_HEAD, HITGROUP_LEFTLEG, HITGROUP_RIGHTLEG];
+    private static readonly HashSet<string> BodyWeapons =
+        ["weapon_awp", "weapon_ssg08", "weapon_p90", "weapon_bizon", "weapon_nova", "weapon_xm1014",
+         "weapon_sawedoff", "weapon_mag7", "weapon_revolver"];
 
-    // Weapons that aim body-first when in Mixed mode (snipers + high-spread / shotguns).
-    private static readonly HashSet<string> _bodyFirstWeapons = new()
-    {
-        "weapon_awp", "weapon_ssg08", "weapon_p90", "weapon_bizon",
-        "weapon_nova", "weapon_xm1014", "weapon_sawedoff", "weapon_mag7", "weapon_revolver"
-    };
-
-    // One-shot flag so we log a single confirmation that overrides are actually firing.
-    private bool _firstOverrideLogged = false;
-
-    // ============================================================
-    // Lifecycle
-    // ============================================================
+    private MemoryFunctionVoid<nint> pick = null!;
+    private MemoryFunctionWithReturn<nint, nint, int, nint> part = null!;
+    private MemoryFunctionWithReturn<nint, nint, byte, nint, byte> visible = null!;
+    private Hitboxes poses = null!;
+    private bool active, logged;
 
     public override void Load(bool hotReload)
     {
-        bool win = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        poses = new Hitboxes(Signatures.Boxes);
+        pick = new(Signatures.Pick);
+        part = new(Signatures.Part);
+        visible = new(Signatures.Visible);
+        if (pick.Handle == 0 || part.Handle == 0 || visible.Handle == 0)
+            throw new InvalidOperationException("Missing bot aim or visibility function.");
 
-        try
-        {
-            // Reject missing fields before installing a hook that can write native memory.
-            if (Schema.GetSchemaOffset("CCSPlayerPawn", "m_pBot") <= 0
-                || Schema.GetSchemaOffset("CCSBot", "m_targetSpot") <= 0
-                || Schema.GetSchemaOffset("CCSBot", "m_enemy") <= 0
-                || Schema.GetSchemaOffset("CCSBot", "m_isEnemyVisible") <= 0)
-                throw new InvalidOperationException("Required bot Schema fields are missing.");
-
-            _pickNewAimSpot = new MemoryFunctionVoid<IntPtr>(win ? WindowsSignature : LinuxSignature);
-
-            long pnaRuntime = _pickNewAimSpot.Handle.ToInt64();
-            if (pnaRuntime == 0)
-                throw new InvalidOperationException("PickNewAimSpot signature resolved to zero address.");
-
-            _pickNewAimSpot.Hook(OnPickNewAimSpotPost, HookMode.Post);
-
-            Logger.LogInformation("[BotAimImprover] Loaded ({Plat}). PickNewAimSpot=0x{Pna:X16}",
-                win ? "Windows" : "Linux", pnaRuntime);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "[BotAimImprover] Fatal error during Load() (signature or Schema unavailable). Plugin inactive.");
-            return;
-        }
-
-        RegisterEventHandler<EventRoundStart>((_, _) =>
-        {
-            _botToControllerUserId.Clear();
-            return HookResult.Continue;
-        });
-
-        RegisterEventHandler<EventPlayerDisconnect>((ev, _) =>
-        {
-            try
-            {
-                var disconnecter = ev.Userid;
-                if (disconnecter != null && disconnecter.UserId.HasValue)
-                {
-                    int leavingUserId = disconnecter.UserId.Value;
-                    foreach (var kv in _botToControllerUserId)
-                        if (kv.Value == leavingUserId)
-                            _botToControllerUserId.TryRemove(kv.Key, out int _);
-                }
-            }
-            catch { /* non-fatal */ }
-            return HookResult.Continue;
-        });
+        part.Hook(OnGetPartPosition, HookMode.Post);
+        try { pick.Hook(OnPickNewAimSpot, HookMode.Post); }
+        catch { part.Unhook(OnGetPartPosition, HookMode.Post); throw; }
+        active = true;
 
         AddCommand("bot_aim", "Set bot aim mode: head, body, mixed", (caller, info) =>
         {
@@ -216,192 +78,122 @@ public class BotAimImprover : BasePlugin
 
     public override void Unload(bool hotReload)
     {
-        try { _pickNewAimSpot?.Unhook(OnPickNewAimSpotPost, HookMode.Post); }
-        catch { /* ignore */ }
+        if (!active) return;
+        try { pick.Unhook(OnPickNewAimSpot, HookMode.Post); }
+        finally { part.Unhook(OnGetPartPosition, HookMode.Post); }
+        active = false;
     }
 
-    // ============================================================
-    // Core override logic (Post-hook on PickNewAimSpot)
-    //
-    // Native function already set m_targetSpot to GUT or HEAD based on
-    // mp_damage_headshot_only. We re-pick based on visible enemy parts and the
-    // bot's weapon, then overwrite only the 12 bytes of m_targetSpot.
-    // ============================================================
-    private HookResult OnPickNewAimSpotPost(DynamicHook hook)
+    private readonly record struct Sight(CCSBot Bot, CCSPlayerPawn Shooter, CCSPlayerPawn Target, int TargetSlot, Vector Eye)
     {
-        try
+        internal HitGroup_t Hit(Vector3 point)
         {
-            IntPtr pCCSBot = hook.GetParam<IntPtr>(0);
-            if (pCCSBot == IntPtr.Zero)
-                return HookResult.Continue;
-
-            var bot = new CCSBot(pCCSBot);
-
-            // 1) Gate: enemy must be generally visible before we
-            //    spend any raytraces. Otherwise the native used last-known position.
-            if (!bot.IsEnemyVisible)
-                return HookResult.Continue;
-
-            // 2) Resolve enemy pawn from m_enemy CHandle.
-            var enemy = bot.Enemy;
-            if (!enemy.IsValid)
-                return HookResult.Continue;
-
-            uint enemyIdx = enemy.Index;
-            if (enemyIdx <= 0 || enemyIdx >= 4096)
-                return HookResult.Continue;
-
-            CCSPlayerPawn? enemyPawn = enemy.Value;
-            if (enemyPawn == null || !enemyPawn.IsValid || enemyPawn.Handle == IntPtr.Zero)
-                return HookResult.Continue;
-
-            // 3) Resolve the bot's controller (for weapon + eye position).
-            var botController = ResolveBotController(pCCSBot);
-            if (botController == null || !TryGetBotEyePosition(botController, out var botEye))
-                return HookResult.Continue;
-
-            string? wpn = botController.PlayerPawn?.Value?.WeaponServices?.ActiveWeapon?.Value?.DesignerName;
-
-            // 4) Select the priority order based on aim mode and weapon.
-            // head: awp -> others -> Head. body: all weapons -> Body.
-            // mixed: body-first weapons -> Body, others -> Jaw.
-            bool isBodyWeapon = wpn != null && _bodyFirstWeapons.Contains(wpn);
-            int[] order = _aimMode switch
-            {
-                AimMode.HEAD => wpn == "weapon_awp" ? _priorityTrunk : _priorityHead,
-                AimMode.BODY => _priorityBody,
-                _ => isBodyWeapon ? _priorityTrunk : _priorityJaw, // MIXED
-            };
-
-            // 5) Walk the priority order and raytrace each point from the bot's
-            // eye; the first visible point wins.
-            int chosenIdx = -1;
-            float rx = 0f, ry = 0f, rz = 0f;
-            foreach (int idx in order)
-            {
-                if (!TryComputePartPos(enemyPawn, idx, out float x, out float y, out float z))
-                    continue;
-                if (!PointVisibleFromEye(botEye, x, y, z))
-                    continue;
-                chosenIdx = idx;
-                rx = x; ry = y; rz = z;
-                break;
-            }
-            if (chosenIdx < 0)
-                return HookResult.Continue;
-
-            // 6) Overwrite only m_targetSpot.xyz.
-            var targetSpot = bot.TargetSpot;
-            targetSpot.X = rx; targetSpot.Y = ry; targetSpot.Z = rz;
-
-            // One-time confirmation that the override path actually runs end-to-end.
-            if (!_firstOverrideLogged)
-            {
-                _firstOverrideLogged = true;
-                Logger.LogInformation(
-                    "[BotAimImprover] Active: first override (weapon={W} point={P}).",
-                    wpn ?? "(null)", _aimPoints[chosenIdx].Name);
-            }
+            var result = Trace.TraceEndShape(Eye, new Vector((nint)(&point)), Shooter, Shot);
+            if (result.IsAllSolid || !(result.Fraction >= 0 && result.Fraction < 1) || result.Hitbox() == 0 ||
+                result.HitEntity().Handle != Target.Handle) return HITGROUP_INVALID;
+            return ((Hitboxes.Hitbox*)result.Hitbox())->Group;
         }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "[BotAimImprover] Exception in PostHook");
-        }
-
-        return HookResult.Continue;
     }
 
-    /// Find the CCSPlayerController whose pawn's m_pBot field equals pCCSBot.
-    /// Cache key: CCSBot pointer. Cache value: bot UserId.
-    private CCSPlayerController? ResolveBotController(IntPtr pCCSBot)
+    private static bool TrySight(CCSBot bot, CCSPlayerPawn? target, out Sight sight)
     {
-        // Cache hit -> look up by UserId.
-        if (_botToControllerUserId.TryGetValue(pCCSBot, out int cachedUserId))
-        {
-            foreach (var ctrl in Utilities.GetPlayers())
-                if (ctrl != null && ctrl.IsValid && ctrl.UserId.HasValue && ctrl.UserId.Value == cachedUserId)
-                    return ctrl;
-            _botToControllerUserId.TryRemove(pCCSBot, out int _); // stale
-        }
-
-        // Slow path: find which bot pawn's m_pBot points to pCCSBot.
-        foreach (var ctrl in Utilities.GetPlayers())
-        {
-            if (ctrl == null || !ctrl.IsValid || !ctrl.IsBot || !ctrl.UserId.HasValue)
-                continue;
-
-            var pawn = ctrl.PlayerPawn?.Value;
-            if (pawn == null || !pawn.IsValid || pawn.Handle == IntPtr.Zero)
-                continue;
-
-            IntPtr pBotPtr;
-            try { pBotPtr = pawn.Bot?.Handle ?? IntPtr.Zero; }
-            catch { continue; }
-
-            if (pBotPtr == pCCSBot)
-            {
-                _botToControllerUserId[pCCSBot] = ctrl.UserId.Value;
-                return ctrl;
-            }
-        }
-        return null;
-    }
-
-    // Bot eye position = bot pawn origin + view offset Z.
-    private static bool TryGetBotEyePosition(CCSPlayerController bot, out Vector eye)
-    {
-        eye = new Vector(0, 0, 0);
-        var pawn = bot.PlayerPawn?.Value;
-        var origin = pawn?.AbsOrigin;
-        if (origin == null) return false;
-        float ez = pawn!.ViewOffset?.Z ?? 64.0f;
-        eye = new Vector(origin.X, origin.Y, origin.Z + ez);
+        sight = default;
+        if (target is not { IsValid: true, Health: > 0, LifeState: 0 } || target.GunGameImmunity ||
+            bot.Player is not { IsValid: true, Health: > 0, LifeState: 0 } shooter || shooter.TeamNum is not (2 or 3) ||
+            target.TeamNum is not (2 or 3) || shooter.TeamNum == target.TeamNum ||
+            bot.Controller is not { IsValid: true, IsBot: true } controller || controller.ControllingBot ||
+            controller.HasBeenControlledByPlayerThisRound || controller.PlayerPawn.Value?.Handle != shooter.Handle ||
+            target.Controller.Value is not { IsValid: true } owner)
+            return false;
+        int slot = owner.As<CCSPlayerController>().Slot;
+        if ((uint)slot >= Hitboxes.Slots) return false;
+        sight = new(bot, shooter, target, slot, bot.EyePosition);
         return true;
     }
 
-    // Compute world position of derived point `idx` from the enemy pawn's schema fields.
-    private static bool TryComputePartPos(CCSPlayerPawn enemyPawn, int idx,
-                                          out float x, out float y, out float z)
+    // Native player visibility calls GetPartPosition(HEAD) before its point LOS
+    // check. Supplying the crown here also works before m_enemy has been set.
+    // The caller still applies its FOV, smoke checks and visible-parts mask.
+    private HookResult OnGetPartPosition(DynamicHook hook)
     {
-        x = y = z = 0;
-        if (idx < 0 || idx >= _aimPoints.Length) return false;
-        var origin = enemyPawn.AbsOrigin;
-        if (origin == null) return false;
+        const int nativeHeadPart = 2;
+        if (hook.GetParam<int>(2) != nativeHeadPart) return HookResult.Continue;
+        nint original = hook.GetReturn<nint>(), target = hook.GetParam<nint>(1);
+        if (original == 0 || target == 0 ||
+            !TrySight(new CCSBot(hook.GetParam<nint>(0)), new CCSPlayerPawn(target), out var sight))
+            return HookResult.Continue;
 
-        ref readonly AimPoint p = ref _aimPoints[idx];
-        float ox = origin.X, oy = origin.Y, oz = origin.Z;
-        float eyeZ = enemyPawn.ViewOffset?.Z ?? 64.0f;
-
-        float yawDeg = enemyPawn.EyeAngles?.Y ?? 0.0f;
-        double yawRad = yawDeg * Math.PI / 180.0;
-        float rX = (float)Math.Sin(yawRad);   // RIGHT vector x
-        float rY = (float)-Math.Cos(yawRad);  // RIGHT vector y
-
-        if (p.FeetAbs)
+        if (sight.Hit(*(Vector3*)original) == HITGROUP_HEAD) return HookResult.Continue;
+        foreach (ref readonly var box in poses.For(sight.Target, sight.TargetSlot))
         {
-            x = ox; y = oy; z = oz + p.Frac;   // absolute rise (FEET)
+            if (box.Group != HITGROUP_HEAD || sight.Hit(box.Crown) != HITGROUP_HEAD) continue;
+            hook.SetReturn(poses.CrownReference(sight.TargetSlot, box.Crown));
+            return HookResult.Changed;
         }
-        else
-        {
-            x = ox + rX * p.Lateral;
-            y = oy + rY * p.Lateral;
-            z = oz + eyeZ * p.Frac;
-        }
-        return !(float.IsNaN(x) || float.IsNaN(y) || float.IsNaN(z)
-                 || float.IsInfinity(x) || float.IsInfinity(y) || float.IsInfinity(z));
+        return HookResult.Continue;
     }
 
-    // World-only LoS test from eye to target point, true if unobstructed (>= 0.999)
-    private bool PointVisibleFromEye(Vector eye, float tx, float ty, float tz)
+    private HookResult OnPickNewAimSpot(DynamicHook hook)
     {
-        try
+        var bot = new CCSBot(hook.GetParam<nint>(0));
+        if (!bot.IsEnemyVisible || !TrySight(bot, bot.Enemy.Value, out var sight))
+            return HookResult.Continue;
+
+        var boxes = poses.For(sight.Target, sight.TargetSlot);
+        var weapon = sight.Shooter.WeaponServices?.ActiveWeapon.Value?.DesignerName;
+        bool body = _aimMode == AimMode.BODY || weapon == "weapon_awp" ||
+                    (_aimMode == AimMode.MIXED && weapon != null && BodyWeapons.Contains(weapon));
+        bool jawFirst = _aimMode == AimMode.MIXED && !body;
+        if (jawFirst)
         {
-            var end = new Vector(tx, ty, tz);
-            var opts = new TraceOptions { InteractsWith = Masks.SolidBrushOnly };
-            var res = Trace.TraceEndShape(eye, end, options: opts);
-            return res.Fraction >= 0.999f;
+            // Mixed rifles traditionally bias toward the jaw. Follow the posed
+            // neck toward the head while keeping the candidate inside the neck.
+            Capsule head = default, neck = default;
+            foreach (ref readonly var box in boxes)
+            {
+                if (box.Group == HITGROUP_HEAD) head = box;
+                if (box.Group == HITGROUP_NECK) neck = box;
+            }
+            if (head.Radius > 0 && neck.Radius > 0)
+            {
+                var delta = head.Center - neck.Center;
+                float distance = delta.Length();
+                if (distance > 0)
+                {
+                    float offset = 0.5f * Math.Min(distance, neck.Radius);
+                    if (AimAt(sight, neck.Center + delta * (offset / distance), HITGROUP_NECK, allowHead: true))
+                        return HookResult.Continue;
+                }
+            }
         }
-        catch { return true; }
+
+        var order = body ? BodyFirst : jawFirst ? JawFirst : HeadFirst;
+        foreach (var group in order)
+        {
+            foreach (ref readonly var box in boxes)
+            {
+                if (box.Group != group) continue;
+                if (AimAt(sight, box.Center, group) || (group == HITGROUP_HEAD && AimAt(sight, box.Crown, group)))
+                    return HookResult.Continue;
+            }
+        }
+        return HookResult.Continue;
     }
 
+    private bool AimAt(Sight sight, Vector3 point, HitGroup_t group, bool allowHead = false)
+    {
+        var hit = sight.Hit(point);
+        if (hit != group && !(allowHead && hit == HITGROUP_HEAD)) return false;
+        if (visible.Invoke(sight.Bot.Handle, (nint)(&point), 1, 0) == 0) return false;
+        var spot = sight.Bot.TargetSpot;
+        spot.X = point.X;
+        spot.Y = point.Y;
+        spot.Z = point.Z;
+        if (!logged)
+        {
+            logged = true;
+            Logger.LogInformation("[BotAimImprover] First hitbox override ({HitGroup}).", hit);
+        }
+        return true;
+    }
 }
